@@ -17,11 +17,18 @@
     .btn{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
     .btn.primary{background:var(--brand);border-color:transparent;color:#06102a;font-weight:800}
     .btn.danger{border-color:rgba(255,79,109,.6);color:var(--danger)}
+    .btn.small{padding:8px 10px;border-radius:10px;font-size:13px}
     .input{width:100%;padding:10px;border-radius:12px;border:1px solid var(--line);background:#0c1428;color:var(--text)}
     .note{color:var(--muted);font-size:13px}
     .row{display:flex;gap:10px;align-items:center}
     .sp{flex:1}
     .hidden{display:none}
+    hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}
+    th{color:var(--muted);font-weight:700;font-size:13px}
+    td{font-size:14px}
+    .navbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
     @media(max-width:820px){.grid{grid-template-columns:1fr}}
   </style>
 </head>
@@ -69,21 +76,74 @@
 
       <div class="grid">
         <div class="card" style="border-radius:14px">
-          <div class="note">Next step</div>
-          <div style="font-size:16px;font-weight:800;margin-top:6px">Add Customers / Expenses / Invoices pages</div>
+          <div class="note">Navigation</div>
+          <div class="navbtns">
+            <button class="btn primary small" id="goCustomers">Customers</button>
+            <button class="btn small" id="goDashboard">Dashboard</button>
+          </div>
+          <div class="note" style="margin-top:10px">Next pages: Expenses, Invoices, Reports</div>
         </div>
+
         <div class="card" style="border-radius:14px">
           <div class="note">Firestore status</div>
           <div style="font-size:16px;font-weight:800;margin-top:6px" id="dbStatus">Not checked</div>
         </div>
       </div>
     </div>
+
+    <!-- CUSTOMERS -->
+    <div class="card hidden" id="customersView">
+      <div class="row" style="margin-bottom:8px">
+        <h3 style="margin:0">Customers</h3>
+        <div class="sp"></div>
+        <button class="btn small" id="backToDash">Back</button>
+      </div>
+
+      <div class="grid">
+        <div>
+          <div class="note">Customer name</div>
+          <input class="input" id="custName" placeholder="Customer name" />
+        </div>
+        <div>
+          <div class="note">Phone</div>
+          <input class="input" id="custPhone" placeholder="Phone" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="addCustomer">Add customer</button>
+        <div class="sp"></div>
+        <div class="note" id="custMsg"></div>
+      </div>
+
+      <hr />
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:45%">Name</th>
+            <th style="width:35%">Phone</th>
+            <th style="width:20%;text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="customersTable"></tbody>
+      </table>
+    </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
     import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
-    import { getFirestore, doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      serverTimestamp,
+      collection,
+      addDoc,
+      getDocs,
+      deleteDoc
+    } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDmaEu0Oyg7vHpmEaNbfv5nhqvfhcpN7_g",
@@ -100,14 +160,20 @@
 
     const loginView = document.getElementById("loginView");
     const dashView = document.getElementById("dashView");
+    const customersView = document.getElementById("customersView");
+
     const userPill = document.getElementById("userPill");
     const btnLogout = document.getElementById("btnLogout");
     const msg = document.getElementById("msg");
     const dbStatus = document.getElementById("dbStatus");
 
+    const custMsg = document.getElementById("custMsg");
+    const customersTable = document.getElementById("customersTable");
+
     function show(view){
       loginView.classList.add("hidden");
       dashView.classList.add("hidden");
+      customersView.classList.add("hidden");
       view.classList.remove("hidden");
     }
 
@@ -127,6 +193,91 @@
       await signOut(auth);
     };
 
+    document.getElementById("goCustomers").onclick = async ()=>{
+      show(customersView);
+      await loadCustomers();
+    };
+
+    document.getElementById("goDashboard").onclick = async ()=>{
+      show(dashView);
+    };
+
+    document.getElementById("backToDash").onclick = async ()=>{
+      show(dashView);
+    };
+
+    document.getElementById("addCustomer").onclick = async ()=>{
+      const name = document.getElementById("custName").value.trim();
+      const phone = document.getElementById("custPhone").value.trim();
+      custMsg.textContent = "";
+
+      if(!name){
+        custMsg.textContent = "Name is required";
+        return;
+      }
+
+      try{
+        await addDoc(collection(db, "customers"), {
+          name,
+          phone,
+          createdAt: new Date()
+        });
+
+        document.getElementById("custName").value = "";
+        document.getElementById("custPhone").value = "";
+        custMsg.textContent = "Saved";
+        await loadCustomers();
+      }catch(e){
+        custMsg.textContent = e?.message || "Save failed";
+      }
+    };
+
+    async function loadCustomers(){
+      customersTable.innerHTML = "";
+      const snap = await getDocs(collection(db, "customers"));
+
+      const rows = [];
+      snap.forEach(d=>{
+        const c = d.data();
+        rows.push({ id: d.id, name: c.name || "", phone: c.phone || "" });
+      });
+
+      rows.sort((a,b)=> a.name.localeCompare(b.name));
+
+      for(const r of rows){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHtml(r.name)}</td>
+          <td>${escapeHtml(r.phone)}</td>
+          <td style="text-align:right">
+            <button class="btn danger small" data-id="${r.id}">Delete</button>
+          </td>
+        `;
+        tr.querySelector("button").onclick = async ()=>{
+          try{
+            await deleteDoc(doc(db, "customers", r.id));
+            await loadCustomers();
+          }catch(e){}
+        };
+        customersTable.appendChild(tr);
+      }
+
+      if(rows.length === 0){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="3" class="note" style="padding:14px 8px">No customers yet</td>`;
+        customersTable.appendChild(tr);
+      }
+    }
+
+    function escapeHtml(s){
+      return String(s || "")
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;")
+        .replaceAll("'","&#039;");
+    }
+
     onAuthStateChanged(auth, async (user)=>{
       if(!user){
         userPill.textContent = "Not signed in";
@@ -139,7 +290,6 @@
       btnLogout.classList.remove("hidden");
       show(dashView);
 
-      // Firestore quick write (optional) to confirm rules are ok
       try{
         await setDoc(doc(db, "ping", user.uid), {
           email: user.email || null,
